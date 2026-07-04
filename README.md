@@ -2,6 +2,8 @@
 
 **LLM-powered trivia quiz generator with a TV-style UI** — inspired by "featured experience" apps on streaming platforms.
 
+🔗 **Live demo:** [sashalyash.github.io/TriviaGen](https://sashalyash.github.io/TriviaGen/)
+
 Pick a topic, pick a difficulty, and Gemini writes a 5-question multiple-choice quiz on the fly. Navigate with arrow keys and Enter — just like a TV remote.
 
 > Built as a weekend prototype exploring AI-driven content generation for TV/streaming experiences, drawing on my background in Roku app development.
@@ -20,6 +22,9 @@ Pick a topic, pick a difficulty, and Gemini writes a 5-question multiple-choice 
 
 ## Run it
 
+**Option A — just try it:** open the [live demo](https://sashalyash.github.io/TriviaGen/), paste your Gemini API key, and generate a quiz.
+
+**Option B — run locally:**
 1. Get a free Gemini API key at [Google AI Studio](https://aistudio.google.com/apikey)
 2. Open `index.html` in a browser (or serve it: `npx serve .`)
 3. Enter a topic, paste your key, hit **Generate Quiz**
@@ -54,4 +59,4 @@ The prompt constrains the model to exactly 5 questions × 4 options with one `co
 
 ## Stack
 
-Vanilla JavaScript · HTML/CSS · Gemini API (`gemini-2.0-flash`)
+Vanilla JavaScript · HTML/CSS · Gemini API (`gemini-2.5-flash`, with fallback to `2.5-flash-lite`)
