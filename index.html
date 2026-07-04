@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TriviaGen — LLM-powered TV Trivia</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161d27;
+    --panel-2: #1d2632;
+    --accent: #00c085;
+    --accent-dim: #007954;
+    --text: #e6edf3;
+    --muted: #8b98a5;
+    --wrong: #e05260;
+    --focus-glow: 0 0 0 3px var(--accent), 0 6px 24px rgba(0, 192, 133, .35);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: radial-gradient(1200px 600px at 50% -10%, #14202e 0%, var(--bg) 60%);
+    color: var(--text);
+    font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px;
+  }
+  .screen { display: none; width: 100%; max-width: 960px; }
+  .screen.active { display: block; }
+
+  h1 { font-size: 44px; letter-spacing: 1px; margin-bottom: 6px; }
+  h1 .spark { color: var(--accent); }
+  .tagline { color: var(--muted); margin-bottom: 36px; font-size: 18px; }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid #232e3c;
+    border-radius: 16px;
+    padding: 28px;
+  }
+
+  label { display: block; color: var(--muted); font-size: 14px; margin: 18px 0 6px; text-transform: uppercase; letter-spacing: .08em; }
+  input[type="text"], input[type="password"] {
+    width: 100%;
+    background: var(--panel-2);
+    border: 1px solid #2b3747;
+    border-radius: 10px;
+    color: var(--text);
+    font-size: 20px;
+    padding: 14px 16px;
+    outline: none;
+  }
+  input:focus { box-shadow: var(--focus-glow); border-color: var(--accent); }
+
+  .row { display: flex; gap: 12px; flex-wrap: wrap; }
+  .chip {
+    background: var(--panel-2);
+    border: 1px solid #2b3747;
+    border-radius: 10px;
+    padding: 12px 22px;
+    font-size: 18px;
+    color: var(--text);
+    cursor: pointer;
+  }
+  .chip[aria-pressed="true"] { background: var(--accent-dim); border-color: var(--accent); }
+
+  .btn {
+    display: inline-block;
+    background: var(--accent);
+    color: #05261b;
+    border: none;
+    border-radius: 12px;
+    font-size: 20px;
+    font-weight: 700;
+    padding: 16px 34px;
+    margin-top: 26px;
+    cursor: pointer;
+  }
+  .btn.secondary { background: var(--panel-2); color: var(--text); border: 1px solid #2b3747; }
+  .focusable:focus { outline: none; box-shadow: var(--focus-glow); }
+
+  .hint { color: var(--muted); font-size: 14px; margin-top: 14px; }
+  .hint a { color: var(--accent); }
+
+  /* Loading */
+  #loading { text-align: center; }
+  .spinner {
+    width: 64px; height: 64px;
+    border: 5px solid var(--panel-2);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    margin: 0 auto 22px;
+    animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Quiz */
+  .progress { display: flex; justify-content: space-between; color: var(--muted); font-size: 16px; margin-bottom: 14px; }
+  .question { font-size: 30px; line-height: 1.35; margin-bottom: 26px; }
+  .answers { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .answer {
+    background: var(--panel-2);
+    border: 1px solid #2b3747;
+    border-radius: 14px;
+    padding: 20px 22px;
+    font-size: 20px;
+    text-align: left;
+    color: var(--text);
+    cursor: pointer;
+    transition: transform .08s ease;
+  }
+  .answer:focus { outline: none; box-shadow: var(--focus-glow); transform: scale(1.02); }
+  .answer.correct { background: var(--accent-dim); border-color: var(--accent); }
+  .answer.wrong { background: #3a2026; border-color: var(--wrong); }
+  .answer:disabled { cursor: default; }
+
+  /* Results */
+  #results { text-align: center; }
+  .score { font-size: 72px; font-weight: 800; color: var(--accent); margin: 12px 0; }
+  .error-box { background: #3a2026; border: 1px solid var(--wrong); border-radius: 10px; padding: 14px; margin-top: 18px; display: none; }
+</style>
+</head>
+<body>
+
+<!-- SETUP -->
+<section id="setup" class="screen active">
+  <h1>Trivia<span class="spark">Gen</span></h1>
+  <p class="tagline">LLM-powered trivia for the big screen. Pick a topic — Gemini writes the quiz.</p>
+  <div class="card">
+    <label for="topic">Topic</label>
+    <input id="topic" class="focusable" type="text" placeholder="e.g. Space exploration, 90s movies, Football" autocomplete="off">
+
+    <label>Difficulty</label>
+    <div class="row" id="difficulty" role="group">
+      <button class="chip focusable" data-value="easy" aria-pressed="false">Easy</button>
+      <button class="chip focusable" data-value="medium" aria-pressed="true">Medium</button>
+      <button class="chip focusable" data-value="hard" aria-pressed="false">Hard</button>
+    </div>
+
+    <label for="apiKey">Gemini API key</label>
+    <input id="apiKey" class="focusable" type="password" placeholder="Paste your key (kept in memory only, never stored)">
+    <p class="hint">Get a free key at <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">Google AI Studio</a>. The key lives only in this page's memory for the session.</p>
+
+    <button id="startBtn" class="btn focusable">▶ Generate Quiz</button>
+    <div id="setupError" class="error-box"></div>
+  </div>
+  <p class="hint">TV-style navigation: use ← ↑ → ↓ arrows and Enter, just like a remote.</p>
+</section>
+
+<!-- LOADING -->
+<section id="loading" class="screen">
+  <div class="spinner"></div>
+  <h2 id="loadingText">Asking Gemini to write your quiz…</h2>
+</section>
+
+<!-- QUIZ -->
+<section id="quiz" class="screen">
+  <div class="progress">
+    <span id="qCounter">Question 1 / 5</span>
+    <span id="qScore">Score: 0</span>
+  </div>
+  <div class="card">
+    <div class="question" id="qText"></div>
+    <div class="answers" id="qAnswers"></div>
+  </div>
+</section>
+
+<!-- RESULTS -->
+<section id="results" class="screen">
+  <div class="card">
+    <h2>Quiz complete!</h2>
+    <div class="score" id="finalScore">0 / 5</div>
+    <p id="verdict" class="tagline"></p>
+    <button id="againBtn" class="btn focusable">↻ New Quiz</button>
+    <button id="sameBtn" class="btn secondary focusable">Same topic again</button>
+  </div>
+</section>
+
+<script>
+"use strict";
+
+/* ---------- State (in-memory only) ---------- */
+const state = {
+  apiKey: "",
+  topic: "",
+  difficulty: "medium",
+  questions: [],
+  index: 0,
+  score: 0,
+  locked: false,
+};
+
+const $ = (id) => document.getElementById(id);
+const screens = ["setup", "loading", "quiz", "results"];
+
+function show(name) {
+  screens.forEach((s) => $(s).classList.toggle("active", s === name));
+  // Move focus to the first sensible element for remote-style UX
+  requestAnimationFrame(() => {
+    const first = $(name).querySelector(".focusable, .answer");
+    if (first) first.focus();
+  });
+}
+
+/* ---------- Difficulty chips ---------- */
+$("difficulty").addEventListener("click", (e) => {
+  const chip = e.target.closest(".chip");
+  if (!chip) return;
+  document.querySelectorAll("#difficulty .chip").forEach((c) => c.setAttribute("aria-pressed", "false"));
+  chip.setAttribute("aria-pressed", "true");
+  state.difficulty = chip.dataset.value;
+});
+
+/* ---------- Gemini call ---------- */
+const MODEL = "gemini-2.0-flash";
+
+function buildPrompt(topic, difficulty) {
+  return `You are a trivia quiz generator for a TV app.
+Generate exactly 5 multiple-choice trivia questions about: "${topic}".
+Difficulty: ${difficulty}.
+
+Rules:
+- Each question has exactly 4 answer options.
+- Exactly one option is correct.
+- Questions must be factually accurate and unambiguous.
+- Keep each question under 25 words and each option under 8 words.
+- Do not repeat questions or make options obviously wrong.
+
+Respond with ONLY valid JSON matching this schema, no markdown, no commentary:
+{
+  "questions": [
+    {
+      "question": "string",
+      "options": ["string", "string", "string", "string"],
+      "correctIndex": 0
+    }
+  ]
+}`;
+}
+
+async function generateQuiz(topic, difficulty, apiKey) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const body = {
+    contents: [{ parts: [{ text: buildPrompt(topic, difficulty) }] }],
+    generationConfig: {
+      temperature: 0.9,
+      responseMimeType: "application/json",
+    },
+  };
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    if (res.status === 400 || res.status === 403) throw new Error("API key rejected. Check your Gemini API key.");
+    if (res.status === 429) throw new Error("Rate limit hit. Wait a moment and try again.");
+    throw new Error(`Gemini API error (${res.status}). ${errText.slice(0, 120)}`);
+  }
+
+  const data = await res.json();
+  const raw = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || "").join("") || "";
+  const clean = raw.replace(/```json|```/g, "").trim();
+
+  let parsed;
+  try {
+    parsed = JSON.parse(clean);
+  } catch {
+    throw new Error("Model returned malformed JSON. Try again.");
+  }
+
+  const qs = parsed?.questions;
+  if (!Array.isArray(qs) || qs.length === 0) throw new Error("No questions in response. Try again.");
+
+  // Validate & normalize each question defensively
+  return qs
+    .filter((q) => q && typeof q.question === "string" && Array.isArray(q.options) && q.options.length === 4 && Number.isInteger(q.correctIndex) && q.correctIndex >= 0 && q.correctIndex < 4)
+    .slice(0, 5);
+}
+
+/* ---------- Flow ---------- */
+async function startQuiz() {
+  const topic = $("topic").value.trim();
+  const apiKey = $("apiKey").value.trim();
+  const errBox = $("setupError");
+  errBox.style.display = "none";
+
+  if (!topic) return showSetupError("Please enter a topic.");
+  if (!apiKey) return showSetupError("Please paste your Gemini API key.");
+
+  state.topic = topic;
+  state.apiKey = apiKey;
+  show("loading");
+  $("loadingText").textContent = `Asking Gemini to write a ${state.difficulty} quiz about “${topic}”…`;
+
+  try {
+    const questions = await generateQuiz(topic, state.difficulty, apiKey);
+    if (questions.length < 3) throw new Error("Got too few valid questions. Try again.");
+    state.questions = questions;
+    state.index = 0;
+    state.score = 0;
+    renderQuestion();
+    show("quiz");
+  } catch (err) {
+    show("setup");
+    showSetupError(err.message);
+  }
+}
+
+function showSetupError(msg) {
+  const errBox = $("setupError");
+  errBox.textContent = "⚠ " + msg;
+  errBox.style.display = "block";
+}
+
+function renderQuestion() {
+  const q = state.questions[state.index];
+  state.locked = false;
+  $("qCounter").textContent = `Question ${state.index + 1} / ${state.questions.length}`;
+  $("qScore").textContent = `Score: ${state.score}`;
+  $("qText").textContent = q.question;
+
+  const box = $("qAnswers");
+  box.innerHTML = "";
+  q.options.forEach((opt, i) => {
+    const btn = document.createElement("button");
+    btn.className = "answer";
+    btn.textContent = opt;
+    btn.addEventListener("click", () => answer(i, btn));
+    box.appendChild(btn);
+  });
+  box.firstChild.focus();
+}
+
+function answer(i, btn) {
+  if (state.locked) return;
+  state.locked = true;
+  const q = state.questions[state.index];
+  const buttons = [...$("qAnswers").children];
+  buttons.forEach((b) => (b.disabled = true));
+  buttons[q.correctIndex].classList.add("correct");
+
+  if (i === q.correctIndex) {
+    state.score++;
+  } else {
+    btn.classList.add("wrong");
+  }
+  $("qScore").textContent = `Score: ${state.score}`;
+
+  setTimeout(() => {
+    state.index++;
+    if (state.index < state.questions.length) {
+      renderQuestion();
+    } else {
+      showResults();
+    }
+  }, 1200);
+}
+
+function showResults() {
+  const total = state.questions.length;
+  $("finalScore").textContent = `${state.score} / ${total}`;
+  const ratio = state.score / total;
+  $("verdict").textContent =
+    ratio === 1 ? "Perfect run. Trivia legend. 🏆" :
+    ratio >= 0.6 ? "Solid! The couch is proud of you." :
+    "Ouch. Blame the questions, we won't tell.";
+  show("results");
+}
+
+$("startBtn").addEventListener("click", startQuiz);
+$("againBtn").addEventListener("click", () => show("setup"));
+$("sameBtn").addEventListener("click", startQuiz);
+
+/* ---------- TV-remote style arrow navigation ---------- */
+document.addEventListener("keydown", (e) => {
+  const arrows = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
+  if (!arrows.includes(e.key)) return;
+
+  const active = document.querySelector(".screen.active");
+  const focusables = [...active.querySelectorAll(".focusable, .answer")].filter((el) => !el.disabled);
+  if (focusables.length === 0) return;
+
+  const current = document.activeElement;
+  let idx = focusables.indexOf(current);
+  if (idx === -1) { focusables[0].focus(); e.preventDefault(); return; }
+
+  // Grid-aware navigation for the 2-column answers grid
+  const inGrid = current.classList.contains("answer");
+  let next = idx;
+  if (inGrid) {
+    if (e.key === "ArrowRight") next = idx + 1;
+    if (e.key === "ArrowLeft") next = idx - 1;
+    if (e.key === "ArrowDown") next = idx + 2;
+    if (e.key === "ArrowUp") next = idx - 2;
+  } else {
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") next = idx + 1;
+    if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = idx - 1;
+  }
+  if (next >= 0 && next < focusables.length) {
+    focusables[next].focus();
+    e.preventDefault();
+  }
+});
+</script>
+</body>
+</html>
