@@ -214,7 +214,8 @@ $("difficulty").addEventListener("click", (e) => {
 });
 
 /* ---------- Gemini call ---------- */
-const MODEL = "gemini-2.0-flash";
+// Fallback chain: if a model is unavailable on this key's tier (404/429), try the next one.
+const MODELS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"];
 
 function buildPrompt(topic, difficulty) {
   return `You are a trivia quiz generator for a TV app.
@@ -240,10 +241,10 @@ Respond with ONLY valid JSON matching this schema, no markdown, no commentary:
 }`;
 }
 
-async function generateQuiz(topic, difficulty, apiKey) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${encodeURIComponent(apiKey)}`;
+async function callModel(model, prompt, apiKey) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
   const body = {
-    contents: [{ parts: [{ text: buildPrompt(topic, difficulty) }] }],
+    contents: [{ parts: [{ text: prompt }] }],
     generationConfig: {
       temperature: 0.9,
       responseMimeType: "application/json",
@@ -257,13 +258,40 @@ async function generateQuiz(topic, difficulty, apiKey) {
   });
 
   if (!res.ok) {
-    const errText = await res.text().catch(() => "");
-    if (res.status === 400 || res.status === 403) throw new Error("API key rejected. Check your Gemini API key.");
-    if (res.status === 429) throw new Error("Rate limit hit. Wait a moment and try again.");
-    throw new Error(`Gemini API error (${res.status}). ${errText.slice(0, 120)}`);
+    // Surface Google's actual error message instead of guessing
+    let apiMsg = "";
+    try {
+      const errJson = await res.json();
+      apiMsg = errJson?.error?.message || "";
+    } catch { /* non-JSON error body */ }
+    const err = new Error(`[${model}] HTTP ${res.status}: ${apiMsg.slice(0, 200) || "no details"}`);
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
+async function generateQuiz(topic, difficulty, apiKey) {
+  const prompt = buildPrompt(topic, difficulty);
+  let data = null;
+  const failures = [];
+
+  for (const model of MODELS) {
+    try {
+      $("loadingText").textContent = `Generating with ${model}…`;
+      data = await callModel(model, prompt, apiKey);
+      break;
+    } catch (err) {
+      failures.push(err.message);
+      // 404 = model not available for this key; 429 = quota/tier issue.
+      // Both are worth retrying with the next model. Anything else — stop.
+      if (err.status !== 404 && err.status !== 429) throw err;
+    }
   }
 
-  const data = await res.json();
+  if (!data) {
+    throw new Error("All models failed: " + failures.join(" | "));
+  }
   const raw = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || "").join("") || "";
   const clean = raw.replace(/```json|```/g, "").trim();
 
